@@ -5,40 +5,67 @@ from typing import Dict, List, Tuple
 import pandas as pd
 import streamlit as st
 
+# Import tracing utilities
+from tracing import (
+    setup_logging,
+    get_logger,
+    trace_function,
+    trace_operation,
+    PerformanceTracker,
+    log_user_action,
+    log_data_operation,
+)
+
+# Initialize logging
+setup_logging()
+logger = get_logger(__name__)
+
 # --- Paths
 BASE_DIR = Path(__file__).parent
 DATA_DIR = BASE_DIR / "data"
 UPLOADS_DIR = BASE_DIR / "uploads"
 
 
+@trace_function
 def ensure_dirs() -> None:
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     UPLOADS_DIR.mkdir(parents=True, exist_ok=True)
+    logger.info(f"Directories ensured: DATA_DIR={DATA_DIR}, UPLOADS_DIR={UPLOADS_DIR}")
 
 
+@trace_operation("save_uploaded_excel")
 def save_uploaded_excel(upload) -> Path:
     """Save an uploaded Excel file into data/ and return the path."""
     target = DATA_DIR / upload.name
     with open(target, "wb") as f:
         f.write(upload.getbuffer())
+    log_user_action("excel_upload", {"filename": upload.name, "size": len(upload.getvalue())})
+    logger.info(f"Saved uploaded file: {target}")
     return target
 
 
 @st.cache_data(show_spinner=False)
+@trace_operation("load_excel")
 def load_excel(path: Path) -> pd.DataFrame:
     """Load an Excel file with pandas (openpyxl engine)."""
-    df = pd.read_excel(path, engine="openpyxl")
-    # Try basic dtype normalization: parse datetimes where possible
-    for col in df.columns:
-        if df[col].dtype == object:
-            # Attempt datetime parsing on object columns; ignore errors
-            parsed = pd.to_datetime(df[col], errors="ignore")
-            df[col] = parsed
+    with PerformanceTracker(f"loading Excel file: {path.name}", logger):
+        df = pd.read_excel(path, engine="openpyxl")
+        # Try basic dtype normalization: parse datetimes where possible
+        for col in df.columns:
+            if df[col].dtype == object:
+                # Attempt datetime parsing on object columns; ignore errors
+                parsed = pd.to_datetime(df[col], errors="ignore")
+                df[col] = parsed
+        logger.info(f"Loaded Excel: {path.name}, shape={df.shape}")
+        log_data_operation("load", rows=len(df), columns=len(df.columns), details={"file": path.name})
     return df
 
 
+@trace_function
 def list_data_files() -> List[Path]:
-    return sorted([p for p in DATA_DIR.glob("*.xlsx") if p.is_file()])
+    files = sorted([p for p in DATA_DIR.glob("*.xlsx") if p.is_file()])
+    logger.info(f"Listed {len(files)} Excel files in {DATA_DIR}")
+    return files
 
 
 def global_search(df: pd.DataFrame, query: str) -> pd.DataFrame:
@@ -50,7 +77,11 @@ def global_search(df: pd.DataFrame, query: str) -> pd.DataFrame:
     for col in df.columns:
         col_vals = df[col].astype(str).str.lower()
         mask |= col_vals.str.contains(query_lower, na=False)
-    return df[mask]
+    result = df[mask]
+    log_user_action("global_search", {"query": query, "matches": len(result), "total_rows": len(df)})
+    log_data_operation("search", rows=len(result), columns=len(df.columns), details={"query": query})
+    logger.info(f"Global search for '{query}': {len(result)}/{len(df)} rows matched")
+    return result
 
 
 def build_filters(df: pd.DataFrame) -> Dict[str, Tuple[str, object]]:
@@ -103,6 +134,12 @@ def apply_filters(df: pd.DataFrame, filters: Dict[str, Tuple[str, object]]) -> p
             start, end = val
             series = pd.to_datetime(out[col], errors="coerce")
             out = out[(series.dt.date >= start) & (series.dt.date <= end)]
+    
+    if filters:
+        log_user_action("apply_filters", {"filter_count": len(filters), "result_rows": len(out), "input_rows": len(df)})
+        log_data_operation("filter", rows=len(out), columns=len(df.columns), details={"filters": list(filters.keys())})
+        logger.info(f"Applied {len(filters)} filters: {len(out)}/{len(df)} rows remaining")
+    
     return out
 
 
@@ -117,13 +154,18 @@ def select_row_key(df: pd.DataFrame, key_col: str) -> str:
     return selected
 
 
+@trace_function
 def list_attachments(row_key: str) -> List[Path]:
     key_dir = UPLOADS_DIR / str(row_key)
     if not key_dir.exists():
+        logger.debug(f"No attachments directory for row_key={row_key}")
         return []
-    return sorted([p for p in key_dir.iterdir() if p.is_file()])
+    attachments = sorted([p for p in key_dir.iterdir() if p.is_file()])
+    logger.info(f"Listed {len(attachments)} attachments for row_key={row_key}")
+    return attachments
 
 
+@trace_operation("save_attachments")
 def save_attachments(row_key: str, files: List[io.BytesIO], names: List[str]) -> None:
     key_dir = UPLOADS_DIR / str(row_key)
     key_dir.mkdir(parents=True, exist_ok=True)
@@ -131,9 +173,12 @@ def save_attachments(row_key: str, files: List[io.BytesIO], names: List[str]) ->
         target = key_dir / name
         with open(target, "wb") as f:
             f.write(fobj.getbuffer())
+    log_user_action("save_attachments", {"row_key": row_key, "file_count": len(files), "filenames": names})
+    logger.info(f"Saved {len(files)} attachments for row_key={row_key}: {names}")
 
 
 def main() -> None:
+    logger.info("Starting IoT Forecast Dashboard application")
     ensure_dirs()
 
     st.set_page_config(page_title="Excel Search & Attachments", layout="wide")
@@ -160,9 +205,11 @@ def main() -> None:
         return
 
     excel_path = DATA_DIR / selected_name
+    logger.info(f"Loading Excel file: {selected_name}")
     try:
         df = load_excel(excel_path)
     except Exception as e:
+        logger.error(f"Failed to load Excel file {selected_name}: {e}", exc_info=True)
         st.error(f"Failed to load Excel: {e}")
         return
 
@@ -180,9 +227,11 @@ def main() -> None:
 
     # Export filtered CSV
     csv_bytes = df_f.to_csv(index=False).encode("utf-8")
-    st.download_button(
+    if st.download_button(
         "Download filtered CSV", csv_bytes, file_name="filtered.csv", mime="text/csv"
-    )
+    ):
+        log_user_action("download_csv", {"rows": len(df_f), "columns": len(df_f.columns)})
+        logger.info(f"User downloaded filtered CSV: {len(df_f)} rows")
 
     # Attachments section
     st.subheader("Row Attachments")
