@@ -1,0 +1,25 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.env
+.env
+.venv/
+venv/
+
+# Streamlit
+.streamlit/
+
+# OS/macOS
+.DS_Store
+
+# Data & uploads (keep directories, ignore files)
+data/*
+!data/.gitkeep
+uploads/*
+!uploads/.gitkeep
+
+# Logs
+logs/
+*.log
