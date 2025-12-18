@@ -24,6 +24,7 @@ source .venv/bin/activate
 
 ```bash
 pip install -r requirements.txt
+pip install -r dev-requirements.txt  # for tests
 ```
 
 ### 3) Run the app
@@ -43,16 +44,31 @@ Then open the provided local URL (typically http://localhost:8501).
 
 ## Project Structure
 
-```
+````
 Forecast-dashboard/
 ├── app.py
 ├── requirements.txt
+├── dev-requirements.txt
 ├── README.md
 ├── .gitignore
+├── .github/
+│   └── workflows/
+│       └── ci.yml
 ├── data/
 └── uploads/
+
+## Tests
+
+Run unit tests locally:
+
+```bash
+pytest -q
+````
 
 ## Contact
 
 For questions or support, contact: sharkh.m91@gmail.com
+
+```
+
 ```
