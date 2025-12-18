@@ -5,9 +5,9 @@ from typing import Dict, List, Tuple
 import pandas as pd
 import streamlit as st
 
-# Import tracing utilities
+# Import tracing module and utilities
+import tracing
 from tracing import (
-    setup_logging,
     get_logger,
     trace_function,
     trace_operation,
@@ -17,7 +17,7 @@ from tracing import (
 )
 
 # Initialize logging
-setup_logging()
+tracing.setup_logging(log_file=tracing.LOG_FILE)
 logger = get_logger(__name__)
 
 # --- Paths
@@ -37,9 +37,10 @@ def ensure_dirs() -> None:
 def save_uploaded_excel(upload) -> Path:
     """Save an uploaded Excel file into data/ and return the path."""
     target = DATA_DIR / upload.name
+    content = upload.getbuffer()
     with open(target, "wb") as f:
-        f.write(upload.getbuffer())
-    log_user_action("excel_upload", {"filename": upload.name, "size": len(upload.getvalue())})
+        f.write(content)
+    log_user_action("excel_upload", {"filename": upload.name, "size": len(content)})
     logger.info(f"Saved uploaded file: {target}")
     return target
 
@@ -227,11 +228,11 @@ def main() -> None:
 
     # Export filtered CSV
     csv_bytes = df_f.to_csv(index=False).encode("utf-8")
-    if st.download_button(
+    st.download_button(
         "Download filtered CSV", csv_bytes, file_name="filtered.csv", mime="text/csv"
-    ):
-        log_user_action("download_csv", {"rows": len(df_f), "columns": len(df_f.columns)})
-        logger.info(f"User downloaded filtered CSV: {len(df_f)} rows")
+    )
+    # Note: Streamlit doesn't provide a callback for actual download completion,
+    # so we don't log download actions to avoid false positives on page renders
 
     # Attachments section
     st.subheader("Row Attachments")

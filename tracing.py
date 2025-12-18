@@ -16,7 +16,7 @@ LOG_LEVEL = logging.INFO
 LOG_FILE = Path("logs/app.log")
 
 
-def setup_logging(log_file: Optional[Path] = None, level: int = LOG_LEVEL) -> None:
+def setup_logging(log_file: Optional[Path] = LOG_FILE, level: int = LOG_LEVEL) -> None:
     """
     Set up application-wide logging configuration.
     
